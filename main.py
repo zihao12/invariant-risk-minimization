@@ -8,7 +8,8 @@ from torch.autograd import grad
 from torchvision import transforms
 
 from colored_mnist import ColoredMNIST
-
+import argparse
+import pdb
 
 class Net(nn.Module):
   def __init__(self):
@@ -82,33 +83,41 @@ def erm_train(model, device, train_loader, optimizer, epoch):
                100. * batch_idx / len(train_loader), loss.item()))
 
 
-def train_and_test_erm():
+def train_and_test_erm(maxiter, i_):
   use_cuda = torch.cuda.is_available()
   device = torch.device("cuda" if use_cuda else "cpu")
 
   kwargs = {'num_workers': 1, 'pin_memory': True} if use_cuda else {}
-  all_train_loader = torch.utils.data.DataLoader(
-    ColoredMNIST(root='./data', env='all_train',
+
+  data_train = ColoredMNIST(root='./data', env='all_train',
                  transform=transforms.Compose([
                      transforms.ToTensor(),
                      transforms.Normalize((0.1307, 0.1307, 0.), (0.3081, 0.3081, 0.3081))
-                   ])),
-    batch_size=64, shuffle=True, **kwargs)
+                   ]))
+
+  indices = torch.randperm(len(data_train))[:int(0.7 * len(data_train))] ## add seed??
+  print(indices[:5])
+  all_train_loader = torch.utils.data.DataLoader(torch.utils.data.Subset(data_train, indices),
+    batch_size=2000, shuffle=True, **kwargs)
 
   test_loader = torch.utils.data.DataLoader(
     ColoredMNIST(root='./data', env='test', transform=transforms.Compose([
       transforms.ToTensor(),
       transforms.Normalize((0.1307, 0.1307, 0.), (0.3081, 0.3081, 0.3081))
     ])),
-    batch_size=1000, shuffle=True, **kwargs)
+    batch_size=2000, shuffle=True, **kwargs)
 
   model = ConvNet().to(device)
   optimizer = optim.Adam(model.parameters(), lr=0.01)
 
-  for epoch in range(1, 2):
+  for epoch in range(1, maxiter + 1): 
     erm_train(model, device, all_train_loader, optimizer, epoch)
     test_model(model, device, all_train_loader, set_name='train set')
     test_model(model, device, test_loader)
+
+  torch.save(model, f'erm_model_{i_}.pt')
+  torch.save(indices, f'erm_indices_{i_}.pt')
+  
 
 
 def compute_irm_penalty(losses, dummy):
@@ -144,33 +153,45 @@ def irm_train(model, device, train_loaders, optimizer, epoch):
     optimizer.step()
     if batch_idx % 2 == 0:
       print('Train Epoch: {} [{}/{} ({:.0f}%)]\tERM loss: {:.6f}\tGrad penalty: {:.6f}'.format(
-        epoch, batch_idx * len(data), len(train_loaders[0].dataset),
+        epoch, batch_idx * len(data), len(train_loaders[0]._dataset),
                100. * batch_idx / len(train_loaders[0]), error.item(), penalty.item()))
       print('First 20 logits', output.data.cpu().numpy()[:20])
 
     batch_idx += 1
 
 
-def train_and_test_irm():
+def train_and_test_irm(maxiter, i_):
   use_cuda = torch.cuda.is_available()
   device = torch.device("cuda" if use_cuda else "cpu")
 
   kwargs = {'num_workers': 1, 'pin_memory': True} if use_cuda else {}
-  train1_loader = torch.utils.data.DataLoader(
-    ColoredMNIST(root='./data', env='train1',
+
+  data_train1 = ColoredMNIST(root='./data', env='train1',
                  transform=transforms.Compose([
                      transforms.ToTensor(),
                      transforms.Normalize((0.1307, 0.1307, 0.), (0.3081, 0.3081, 0.3081))
-                   ])),
+                   ]))
+
+  indices1 = torch.randperm(len(data_train1))[:int(0.7 * len(data_train1))] ## add seed??
+  train1_loader = torch.utils.data.DataLoader(torch.utils.data.Subset(data_train1, indices1),
     batch_size=2000, shuffle=True, **kwargs)
 
-  train2_loader = torch.utils.data.DataLoader(
-    ColoredMNIST(root='./data', env='train2',
+
+
+
+
+
+
+  data_train2 = ColoredMNIST(root='./data', env='train2',
                  transform=transforms.Compose([
                      transforms.ToTensor(),
                      transforms.Normalize((0.1307, 0.1307, 0.), (0.3081, 0.3081, 0.3081))
-                   ])),
+                   ]))
+
+  indices2 = torch.randperm(len(data_train2))[:int(0.7 * len(data_train2))] ## add seed??
+  train2_loader = torch.utils.data.DataLoader(torch.utils.data.Subset(data_train2, indices2),
     batch_size=2000, shuffle=True, **kwargs)
+
 
   test_loader = torch.utils.data.DataLoader(
     ColoredMNIST(root='./data', env='test', transform=transforms.Compose([
@@ -182,7 +203,7 @@ def train_and_test_irm():
   model = ConvNet().to(device)
   optimizer = optim.Adam(model.parameters(), lr=0.001)
 
-  for epoch in range(1, 100):
+  for epoch in range(1, maxiter + 1):
     irm_train(model, device, [train1_loader, train2_loader], optimizer, epoch)
     train1_acc = test_model(model, device, train1_loader, set_name='train1 set')
     train2_acc = test_model(model, device, train2_loader, set_name='train2 set')
@@ -190,6 +211,12 @@ def train_and_test_irm():
     if train1_acc > 70 and train2_acc > 70 and test_acc > 60:
       print('found acceptable values. stopping training.')
       return
+
+  #pdb.set_trace()
+  torch.save(model, f'irm_model_{i_}.pt')
+  torch.save(indices1, f'irm_indices1_{i_}.pt')
+  torch.save(indices2, f'irm_indices2_{i_}.pt')
+  
 
 
 def plot_dataset_digits(dataset):
@@ -209,10 +236,18 @@ def plot_dataset_digits(dataset):
   plt.show()  # finally, render the plot
 
 
-def main():
-  train_and_test_irm()
-  # train_and_test_erm()
+def main(method, maxiter, i_):
+  if method == 'irm':
+    train_and_test_irm(maxiter, i_)
+  if method == 'erm':
+    train_and_test_erm(maxiter, i_)
 
 
 if __name__ == '__main__':
-  main()
+  parser = argparse.ArgumentParser()
+  parser.add_argument('--i', type=int, default= 1, help='model index')
+  parser.add_argument('--method', type=str, default='irm',  help='method')
+  parser.add_argument('--maxiter', type=int, default=1,  help='method')
+  args = parser.parse_args()
+
+  main(args.method, args.maxiter, args.i)
