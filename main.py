@@ -9,7 +9,9 @@ from torchvision import transforms
 
 from colored_mnist import ColoredMNIST
 import argparse
+import pickle
 import pdb
+import numpy as np
 
 class Net(nn.Module):
   def __init__(self):
@@ -59,6 +61,7 @@ def test_model(model, device, test_loader, set_name="test set"):
                          torch.Tensor([0.0]).to(device))  # get the index of the max log-probability
       correct += pred.eq(target.view_as(pred)).sum().item()
 
+  #pdb.set_trace()
   test_loss /= len(test_loader.dataset)
 
   print('\nPerformance on {}: Average loss: {:.4f}, Accuracy: {}/{} ({:.2f}%)\n'.format(
@@ -66,6 +69,21 @@ def test_model(model, device, test_loader, set_name="test set"):
     100. * correct / len(test_loader.dataset)))
 
   return 100. * correct / len(test_loader.dataset)
+
+def eval_model(model, device, test_loader, set_name="test set"):
+  model.eval()
+  acc = np.array([])
+  with torch.no_grad():
+    for data, target in test_loader:
+      data, target = data.to(device), target.to(device).float()
+      output = model(data)
+      pred = torch.where(torch.gt(output, torch.Tensor([0.0]).to(device)),
+                         torch.Tensor([1.0]).to(device),
+                         torch.Tensor([0.0]).to(device))  # get the index of the max log-probability
+      acc = np.append(acc, pred.eq(target.view_as(pred)).cpu().detach().numpy())
+
+  print(f'acc on {set_name} is {acc.mean()}')
+  return acc
 
 
 def erm_train(model, device, train_loader, optimizer, epoch):
@@ -83,7 +101,7 @@ def erm_train(model, device, train_loader, optimizer, epoch):
                100. * batch_idx / len(train_loader), loss.item()))
 
 
-def train_and_test_erm(maxiter, i_):
+def train_and_test_erm(maxiter, out_result_name, out_model_name):
   use_cuda = torch.cuda.is_available()
   device = torch.device("cuda" if use_cuda else "cpu")
 
@@ -95,6 +113,9 @@ def train_and_test_erm(maxiter, i_):
                      transforms.Normalize((0.1307, 0.1307, 0.), (0.3081, 0.3081, 0.3081))
                    ]))
 
+  complete_data_loader = torch.utils.data.DataLoader(data_train,
+    batch_size=2000, shuffle=False, **kwargs)
+
   indices = torch.randperm(len(data_train))[:int(0.7 * len(data_train))] ## add seed??
   print(indices[:5])
   all_train_loader = torch.utils.data.DataLoader(torch.utils.data.Subset(data_train, indices),
@@ -105,7 +126,7 @@ def train_and_test_erm(maxiter, i_):
       transforms.ToTensor(),
       transforms.Normalize((0.1307, 0.1307, 0.), (0.3081, 0.3081, 0.3081))
     ])),
-    batch_size=2000, shuffle=True, **kwargs)
+    batch_size=2000, shuffle=False, **kwargs)
 
   model = ConvNet().to(device)
   optimizer = optim.Adam(model.parameters(), lr=0.01)
@@ -115,8 +136,14 @@ def train_and_test_erm(maxiter, i_):
     test_model(model, device, all_train_loader, set_name='train set')
     test_model(model, device, test_loader)
 
-  torch.save(model, f'erm_model_{i_}.pt')
-  torch.save(indices, f'erm_indices_{i_}.pt')
+  out = {}
+  out['acc_train'] = eval_model(model, device, complete_data_loader, set_name="complete train set")
+  out['acc_test'] = eval_model(model, device, test_loader)
+  out['indices'] = indices.cpu().detach().numpy()
+  file = open(out_result_name, 'wb')
+  pickle.dump(out, file)
+  torch.save(model, out_model_name)
+  
   
 
 
@@ -160,11 +187,19 @@ def irm_train(model, device, train_loaders, optimizer, epoch):
     batch_idx += 1
 
 
-def train_and_test_irm(maxiter, i_):
+def train_and_test_irm(maxiter, out_result_name, out_model_name):
   use_cuda = torch.cuda.is_available()
   device = torch.device("cuda" if use_cuda else "cpu")
 
   kwargs = {'num_workers': 1, 'pin_memory': True} if use_cuda else {}
+
+  data_train = ColoredMNIST(root='./data', env='all_train',
+                 transform=transforms.Compose([
+                     transforms.ToTensor(),
+                     transforms.Normalize((0.1307, 0.1307, 0.), (0.3081, 0.3081, 0.3081))
+                   ]))
+  complete_data_loader = torch.utils.data.DataLoader(data_train,
+    batch_size=2000, shuffle=False, **kwargs)
 
   data_train1 = ColoredMNIST(root='./data', env='train1',
                  transform=transforms.Compose([
@@ -175,12 +210,6 @@ def train_and_test_irm(maxiter, i_):
   indices1 = torch.randperm(len(data_train1))[:int(0.7 * len(data_train1))] ## add seed??
   train1_loader = torch.utils.data.DataLoader(torch.utils.data.Subset(data_train1, indices1),
     batch_size=2000, shuffle=True, **kwargs)
-
-
-
-
-
-
 
   data_train2 = ColoredMNIST(root='./data', env='train2',
                  transform=transforms.Compose([
@@ -198,7 +227,7 @@ def train_and_test_irm(maxiter, i_):
       transforms.ToTensor(),
       transforms.Normalize((0.1307, 0.1307, 0.), (0.3081, 0.3081, 0.3081))
     ])),
-    batch_size=1000, shuffle=True, **kwargs)
+    batch_size=1000, shuffle=False, **kwargs)
 
   model = ConvNet().to(device)
   optimizer = optim.Adam(model.parameters(), lr=0.001)
@@ -212,10 +241,16 @@ def train_and_test_irm(maxiter, i_):
       print('found acceptable values. stopping training.')
       return
 
-  #pdb.set_trace()
-  torch.save(model, f'irm_model_{i_}.pt')
-  torch.save(indices1, f'irm_indices1_{i_}.pt')
-  torch.save(indices2, f'irm_indices2_{i_}.pt')
+  out = {}
+  out['acc_train'] = eval_model(model, device, complete_data_loader, set_name="complete train set")
+  out['acc_test'] = eval_model(model, device, test_loader)
+  # out['indices1'] = indices1.cpu().detach().numpy()
+  # out['indices2'] = indices2.cpu().detach().numpy()
+  out['indices'] = np.append(indices1.cpu().detach().numpy(), 20000 + indices2.cpu().detach().numpy()) ## easy to break
+
+  file = open(out_result_name, 'wb')
+  pickle.dump(out, file)
+  torch.save(model, out_model_name)
   
 
 
@@ -236,11 +271,11 @@ def plot_dataset_digits(dataset):
   plt.show()  # finally, render the plot
 
 
-def main(method, maxiter, i_):
+def main(method, maxiter, out_result_name, out_model_name):
   if method == 'irm':
-    train_and_test_irm(maxiter, i_)
+    train_and_test_irm(maxiter, out_result_name, out_model_name)
   if method == 'erm':
-    train_and_test_erm(maxiter, i_)
+    train_and_test_erm(maxiter, out_result_name, out_model_name)
 
 
 if __name__ == '__main__':
@@ -248,6 +283,15 @@ if __name__ == '__main__':
   parser.add_argument('--i', type=int, default= 1, help='model index')
   parser.add_argument('--method', type=str, default='irm',  help='method')
   parser.add_argument('--maxiter', type=int, default=1,  help='method')
+  parser.add_argument('--out_result', type=str,  help='out_result')
+  parser.add_argument('--out_model', type=str,  help='out_model')
   args = parser.parse_args()
 
-  main(args.method, args.maxiter, args.i)
+  method = args.method
+  maxiter = args.maxiter
+  i = args.i
+  out_result_name = args.out_result
+  out_model_name = args.out_model
+
+  torch.manual_seed(i)
+  main(method, maxiter, out_result_name, out_model_name)
