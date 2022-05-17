@@ -140,9 +140,11 @@ def train_and_test_erm(maxiter, out_result_name, out_model_name):
   out['acc_train'] = eval_model(model, device, complete_data_loader, set_name="complete train set")
   out['acc_test'] = eval_model(model, device, test_loader)
   out['indices'] = indices.cpu().detach().numpy()
-  file = open(out_result_name, 'wb')
-  pickle.dump(out, file)
+  with open(out_result_name, 'wb') as f:
+    pickle.dump(out, f)
   torch.save(model, out_model_name)
+
+  
   
   
 
@@ -247,10 +249,11 @@ def train_and_test_irm(maxiter, out_result_name, out_model_name):
   # out['indices1'] = indices1.cpu().detach().numpy()
   # out['indices2'] = indices2.cpu().detach().numpy()
   out['indices'] = np.append(indices1.cpu().detach().numpy(), 20000 + indices2.cpu().detach().numpy()) ## easy to break
-
-  file = open(out_result_name, 'wb')
-  pickle.dump(out, file)
+  with open(out_result_name, 'wb') as f:
+    pickle.dump(out, f)
   torch.save(model, out_model_name)
+
+  
   
 
 
